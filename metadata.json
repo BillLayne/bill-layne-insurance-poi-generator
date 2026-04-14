@@ -1,0 +1,5 @@
+{
+  "name": "Bill Layne Insurance POI Generator",
+  "description": "Automated Proof of Insurance Generator for Bill Layne Insurance Agency using Gemini AI",
+  "requestFramePermissions": []
+}
