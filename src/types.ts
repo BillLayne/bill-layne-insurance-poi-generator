@@ -7,6 +7,9 @@ export interface Coverage {
 
 export interface ParsedPolicyData {
   carrier: string;
+  policyCategory: string;
+  customPolicyLabel?: string | null;
+  policyTypeCode: string;
   policyNumber: string;
   policyPeriodStart: string;
   policyPeriodEnd: string;
@@ -27,6 +30,14 @@ export interface ParsedPolicyData {
   vehicleUse: string;
   garagingZip: string;
   garagingState: string;
+  propertyDescription: string;
+  propertyAddress: string;
+  propertyCity: string;
+  propertyState: string;
+  propertyZip: string;
+  constructionType: string;
+  occupancyType: string;
+  yearBuilt: string;
   ratingBase: string | null;
   totalAnnualPremium: string;
   monthlyPayment: string | null;

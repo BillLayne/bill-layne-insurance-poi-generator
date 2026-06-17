@@ -1,59 +1,187 @@
 import { AGENCY, CARRIER_LOGOS, AGENT_IDS } from "../constants";
 import { ParsedPolicyData, Lienholder } from "../types";
 
-export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder, docDate: string): string {
-  if (!data) return "";
+const clean = (value: unknown, fallback = "") => {
+  if (value == null) return fallback;
+  const text = String(value).trim();
+  if (!text || text.toLowerCase() === "null" || text.toLowerCase() === "undefined") {
+    return fallback;
+  }
+  return text;
+};
 
-  let carrierLogoUrl = CARRIER_LOGOS[data.carrier || ""] || "";
+const hasValue = (value: unknown) => clean(value) !== "";
 
-  if (!carrierLogoUrl && data.carrier) {
-    // Try to find a matching logo by checking if a key is part of the carrier name
-    const key = Object.keys(CARRIER_LOGOS).find((k) =>
-      data.carrier.toLowerCase().includes(k.toLowerCase())
+const formatLine = (...parts: Array<unknown>) => parts.map((part) => clean(part)).filter(Boolean).join(" ");
+
+const formatCityStateZip = (city: unknown, state: unknown, zip: unknown) => {
+  const cityText = clean(city);
+  const stateText = clean(state);
+  const zipText = clean(zip);
+  if (!cityText && !stateText && !zipText) return "";
+  return [cityText, [stateText, zipText].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+};
+
+const inferPolicyCategory = (data: ParsedPolicyData) => {
+  const explicit = clean(data.policyCategory).toLowerCase();
+  if (explicit) return explicit;
+
+  const policyTypeCode = clean(data.policyTypeCode).toLowerCase();
+  if (/(^|\b)(ho|dp|mh|condo|renters|dwelling|landlord)(\b|$)/.test(policyTypeCode)) {
+    return "home";
+  }
+
+  const coverageNames = (data.coverages || [])
+    .map((coverage) => clean(coverage.name).toLowerCase())
+    .join(" | ");
+
+  if (/(cov a|cov b|cov c|cov d|dwelling|other structures|personal property|loss of use|inland flood|equipment breakdown|refrigerated property)/.test(coverageNames)) {
+    return "home";
+  }
+
+  if (hasValue(data.vehicleVIN) || hasValue(data.vehicleYear) || hasValue(data.vehicleMake) || hasValue(data.vehicleModel) || hasValue(data.vehicleType)) {
+    return "auto";
+  }
+
+  return "other";
+};
+
+const formatCategoryLabel = (value: string) =>
+  value
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+
+const pickCarrierLogo = (carrier: string) => {
+  let carrierLogoUrl = CARRIER_LOGOS[carrier || ""] || "";
+
+  if (!carrierLogoUrl && carrier) {
+    const key = Object.keys(CARRIER_LOGOS).find((candidate) =>
+      carrier.toLowerCase().includes(candidate.toLowerCase()),
     );
     if (key) {
       carrierLogoUrl = CARRIER_LOGOS[key];
     }
   }
 
-  let agentIdValue = AGENT_IDS[data.carrier || ""];
-  if (!agentIdValue && data.carrier) {
-    const key = Object.keys(AGENT_IDS).find((k) =>
-      data.carrier.toLowerCase().includes(k.toLowerCase())
+  return carrierLogoUrl;
+};
+
+const pickAgentId = (carrier: string) => {
+  let agentIdValue = AGENT_IDS[carrier || ""];
+
+  if (!agentIdValue && carrier) {
+    const key = Object.keys(AGENT_IDS).find((candidate) =>
+      carrier.toLowerCase().includes(candidate.toLowerCase()),
     );
     if (key) {
       agentIdValue = AGENT_IDS[key];
     }
   }
 
-  const agentId = agentIdValue
-    ? `Agent #${agentIdValue} — ${data.carrier || ""} Authorized`
+  return agentIdValue
+    ? `Agent #${agentIdValue} - ${carrier || ""} Authorized`
     : "Licensed Independent Agent";
+};
 
-  const coverageRows = (data.coverages || [])
+const buildCoverageRows = (coverages: ParsedPolicyData["coverages"]) =>
+  (coverages || [])
     .map(
-      (c) => `
+      (coverage) => `
     <tr>
-      <td>${c.name || ""}</td>
-      <td>${c.limit || "—"}</td>
-      <td>${c.deductible || "—"}</td>
-      <td>${c.premium || "—"}</td>
+      <td>${clean(coverage.name, "&mdash;")}</td>
+      <td>${clean(coverage.limit, "&mdash;")}</td>
+      <td>${clean(coverage.deductible, "&mdash;")}</td>
+      <td>${clean(coverage.premium, "&mdash;")}</td>
     </tr>
-  `
+  `,
     )
     .join("");
 
-  const formattedAddress = lienholder?.address ? lienholder.address.replace(/\n/g, '<br/>') : "";
+const buildRiskDetails = (data: ParsedPolicyData, policyCategory: string) => {
+  const customPolicyLabel = clean(data.customPolicyLabel);
+  const propertyAddress = clean(data.propertyAddress) || clean(data.insuredAddress);
+  const propertyCityStateZip =
+    formatCityStateZip(data.propertyCity, data.propertyState, data.propertyZip) ||
+    formatCityStateZip(data.insuredCity, data.insuredState, data.insuredZip);
+  const vehicleDetail = data.vehicleLength
+    ? `${clean(data.vehicleType)} / ${clean(data.vehicleLength)} ft.`
+    : clean(data.vehicleType);
 
-  const lienholderBlock = lienholder?.name
+  if (policyCategory === "home") {
+    return {
+      header: "Insured Property / Collateral",
+      subjectSuffix: customPolicyLabel || clean(data.policyTypeCode) || clean(data.propertyDescription) || "Property Policy",
+      bodyNoun: "property",
+      rows: [
+        ["Property:", clean(data.propertyDescription, clean(data.policyTypeCode, "Residential Property"))],
+        ["Premises:", [propertyAddress, propertyCityStateZip].filter(Boolean).join("<br/>")],
+        ["Construction:", clean(data.constructionType)],
+        ["Occupancy:", clean(data.occupancyType)],
+        ["Year Built:", clean(data.yearBuilt)],
+        ["Policy Form:", clean(data.policyTypeCode)],
+      ].filter(([, value]) => Boolean(value)),
+    };
+  }
+
+  if (policyCategory === "auto") {
+    return {
+      header: "Insured Vehicle / Collateral",
+      subjectSuffix: customPolicyLabel || clean(data.vehicleType, clean(data.policyTypeCode, "Auto Policy")),
+      bodyNoun: "vehicle",
+      rows: [
+        ["Vehicle:", formatLine(data.vehicleYear, data.vehicleMake, data.vehicleModel)],
+        ["VIN:", clean(data.vehicleVIN)],
+        ["Type:", vehicleDetail],
+        ["Garaging:", formatCityStateZip(data.garagingZip, data.garagingState, "")],
+        ["Use:", clean(data.vehicleUse)],
+        ["ACV Rating Base:", clean(data.ratingBase)],
+      ].filter(([, value]) => Boolean(value)),
+    };
+  }
+
+  return {
+    header: "Insured Risk / Collateral",
+    subjectSuffix: customPolicyLabel || clean(data.policyTypeCode, formatCategoryLabel(policyCategory) || "Policy"),
+    bodyNoun: customPolicyLabel ? customPolicyLabel.toLowerCase() : "insured risk",
+    rows: [
+      ["Type:", customPolicyLabel || clean(data.policyTypeCode, clean(data.vehicleType, clean(data.propertyDescription, formatCategoryLabel(policyCategory) || "Policy")))],
+      ["Location:", [propertyAddress || clean(data.insuredAddress), propertyCityStateZip || formatCityStateZip(data.insuredCity, data.insuredState, data.insuredZip)].filter(Boolean).join("<br/>")],
+      ["Description:", clean(data.propertyDescription, formatLine(data.vehicleYear, data.vehicleMake, data.vehicleModel))],
+    ].filter(([, value]) => Boolean(value)),
+  };
+};
+
+export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder, docDate: string): string {
+  if (!data) return "";
+
+  const carrier = clean(data.carrier);
+  const carrierLogoUrl = pickCarrierLogo(carrier);
+  const agentId = pickAgentId(carrier);
+  const policyCategory = inferPolicyCategory(data);
+  const riskDetails = buildRiskDetails(data, policyCategory);
+  const coverageRows = buildCoverageRows(data.coverages);
+  const lienholderName = clean(lienholder?.name);
+  const lienholderAddress = clean(lienholder?.address).replace(/\n/g, "<br/>");
+  const lienholderCityStateZip = clean(lienholder?.cityStateZip);
+  const policyNumber = clean(data.policyNumber, "Pending");
+  const formattedAddress = lienholderAddress;
+  const insuredName = clean(data.namedInsured, "Insured");
+  const insuredAddress = clean(data.insuredAddress);
+  const insuredCityStateZip = formatCityStateZip(data.insuredCity, data.insuredState, data.insuredZip);
+  const policyPeriod = [clean(data.policyPeriodStart), clean(data.policyPeriodEnd)].filter(Boolean).join(" - ");
+  const totalAnnualPremium = clean(data.totalAnnualPremium, "&mdash;");
+
+  const lienholderBlock = lienholderName
     ? `
     <div class="lien-box">
-      <div class="lien-box-header">★ Lienholder / Loss Payee on File</div>
+      <div class="lien-box-header">&#9733; Lienholder / Loss Payee on File</div>
       <div class="lien-box-body">
         <table class="lien-grid">
           <tr>
             <td class="lbl" style="width:18%;">Lienholder Name:</td>
-            <td style="width:40%;"><strong>${lienholder.name || ""}</strong></td>
+            <td style="width:40%;"><strong>${lienholderName}</strong></td>
             <td class="lbl" style="width:15%;">Interest:</td>
             <td style="width:27%;">Loss Payee / Lienholder</td>
           </tr>
@@ -61,12 +189,12 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
             <td class="lbl">Address:</td>
             <td colspan="3">
               ${formattedAddress}<br/>
-              ${lienholder.cityStateZip || ""}
+              ${lienholderCityStateZip}
             </td>
           </tr>
         </table>
         <p style="font-size:8pt; margin-top:4px; color:#555;">
-          ${lienholder.name || ""} is recorded as Loss Payee. In the event of a covered total or partial loss,
+          ${lienholderName} is recorded as Loss Payee. In the event of a covered total or partial loss,
           settlement proceeds will be issued jointly or as directed in accordance with their financial interest.
         </p>
       </div>
@@ -74,15 +202,17 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
   `
     : "";
 
-  const vehicleDetail = data.vehicleLength
-    ? `${data.vehicleType || ""} / ${data.vehicleLength} ft.`
-    : (data.vehicleType || "");
+  const riskRows = riskDetails.rows
+    .map(
+      ([label, value]) => `<tr><td class="lbl">${label}</td><td>${value}</td></tr>`,
+    )
+    .join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Verification of Insurance - ${data.namedInsured || "Document"}</title>
+<title>Verification of Insurance - ${insuredName}</title>
 <style>
   @page { size: letter; margin: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -141,7 +271,6 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
   .sig-line { border-top: 1.5px solid #000; padding-top: 2px; margin-top: 12px; font-size: 8pt; }
   .footer { border-top: 2px solid #003d7a; padding-top: 4px; margin-top: 6px; }
   .footer-table { width: 100%; border-collapse: collapse; }
-  .footer-logo img { height: 24px; }
   .footer-info { text-align: right; font-size: 7.5pt; color: #333; line-height: 1.35; }
   .footer-tagline { font-style: italic; font-size: 7pt; color: #003d7a; }
   .page-note { text-align: center; font-size: 7pt; color: #777; margin-top: 3px; }
@@ -152,14 +281,14 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
 <table class="header-table">
   <tr>
     <td class="carrier-logo">
-      <img src="${carrierLogoUrl}" alt="${data.carrier}" onerror="this.style.display='none'" />
-      <span style="font-size:11pt; font-weight:bold; color:#003d7a;">${carrierLogoUrl ? "" : data.carrier}</span>
+      <img src="${carrierLogoUrl}" alt="${carrier}" onerror="this.style.display='none'" />
+      <span style="font-size:11pt; font-weight:bold; color:#003d7a;">${carrierLogoUrl ? "" : carrier}</span>
     </td>
     <td style="width:55%; text-align:right;">
       <div class="doc-info-box">
         <div class="doc-title">VERIFICATION OF INSURANCE</div>
-        <div class="doc-sub">Policy No: <strong>${data.policyNumber}</strong> &nbsp;|&nbsp; Date: ${docDate}</div>
-        <div class="doc-sub">${data.carrier}</div>
+        <div class="doc-sub">Policy No: <strong>${policyNumber}</strong> &nbsp;|&nbsp; Date: ${docDate}</div>
+        <div class="doc-sub">${carrier}</div>
       </div>
     </td>
   </tr>
@@ -172,34 +301,34 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
     <td style="width:48%; padding-right:20px; vertical-align:top;">
       <div class="addr-label">To / Lienholder:</div>
       ${
-        lienholder.name
+        lienholderName
           ? `
-        <div class="addr-name">${lienholder.name.toUpperCase()}</div>
+        <div class="addr-name">${lienholderName.toUpperCase()}</div>
         <div class="addr-line">${formattedAddress}</div>
-        <div class="addr-line">${lienholder.cityStateZip}</div>
+        <div class="addr-line">${lienholderCityStateZip}</div>
       `
-          : `<div class="addr-line" style="color:#666; font-style:italic;">See Lienholder section below</div>`
+          : `<div class="addr-line" style="color:#666; font-style:italic;">See lienholder section below</div>`
       }
     </td>
     <td style="width:52%; vertical-align:top;">
       <div class="addr-label">Insured:</div>
-      <div class="addr-name">${data.namedInsured.toUpperCase()}</div>
-      <div class="addr-line">${data.insuredAddress}</div>
-      <div class="addr-line">${data.insuredCity}, ${data.insuredState} ${data.insuredZip}</div>
+      <div class="addr-name">${insuredName.toUpperCase()}</div>
+      <div class="addr-line">${insuredAddress}</div>
+      <div class="addr-line">${insuredCityStateZip}</div>
       ${
-        data.insuredEmail
-          ? `<div class="addr-line" style="margin-top:3px; color:#444; font-size:8.5pt;">${data.insuredEmail}</div>`
+        hasValue(data.insuredEmail)
+          ? `<div class="addr-line" style="margin-top:3px; color:#444; font-size:8.5pt;">${clean(data.insuredEmail)}</div>`
           : ""
       }
     </td>
   </tr>
 </table>
 
-<div class="subject-bar">RE: Verification of Active Insurance Coverage — ${data.vehicleType}</div>
+<div class="subject-bar">RE: Verification of Active Insurance Coverage - ${riskDetails.subjectSuffix}</div>
 
 <p class="body-text">
-  This letter confirms that <strong>${data.namedInsured}</strong> carries active insurance through 
-  <strong>${data.carrier}</strong> on the vehicle described below. 
+  This letter confirms that <strong>${insuredName}</strong> carries active insurance through
+  <strong>${carrier}</strong> on the ${riskDetails.bodyNoun} described below.
   This policy is currently in force and in good standing as of the date of this letter.
 </p>
 
@@ -210,15 +339,20 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
         <div class="policy-box-header">Policy Information</div>
         <div class="policy-box-body">
           <table class="policy-grid">
-            <tr><td class="lbl">Policy #:</td><td>${data.policyNumber}</td></tr>
-            <tr><td class="lbl">Period:</td><td>${data.policyPeriodStart} – ${data.policyPeriodEnd}</td></tr>
-            <tr><td class="lbl">Named Insured:</td><td>${data.namedInsured}</td></tr>
+            <tr><td class="lbl">Policy #:</td><td>${policyNumber}</td></tr>
+            <tr><td class="lbl">Period:</td><td>${policyPeriod}</td></tr>
+            <tr><td class="lbl">Named Insured:</td><td>${insuredName}</td></tr>
             ${
-              data.coInsured
-                ? `<tr><td class="lbl">Co-Insured:</td><td>${data.coInsured}</td></tr>`
+              hasValue(data.coInsured)
+                ? `<tr><td class="lbl">Co-Insured:</td><td>${clean(data.coInsured)}</td></tr>`
                 : ""
             }
-            <tr><td class="lbl">Company:</td><td>${data.carrier}</td></tr>
+            <tr><td class="lbl">Company:</td><td>${carrier}</td></tr>
+            ${
+              hasValue(data.policyTypeCode)
+                ? `<tr><td class="lbl">Policy Type:</td><td>${clean(data.policyTypeCode)}</td></tr>`
+                : ""
+            }
           </table>
         </div>
       </div>
@@ -226,18 +360,10 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
     <td style="width:2%;"></td>
     <td style="width:49%; vertical-align:top; padding-left:6px;">
       <div class="policy-box">
-        <div class="policy-box-header">Insured Vehicle / Collateral</div>
+        <div class="policy-box-header">${riskDetails.header}</div>
         <div class="policy-box-body">
           <table class="policy-grid">
-            <tr><td class="lbl">Vehicle:</td><td>${data.vehicleYear} ${data.vehicleMake} ${data.vehicleModel}</td></tr>
-            <tr><td class="lbl">VIN:</td><td>${data.vehicleVIN}</td></tr>
-            <tr><td class="lbl">Type:</td><td>${vehicleDetail}</td></tr>
-            <tr><td class="lbl">Garaging:</td><td>${data.garagingZip}, ${data.garagingState}</td></tr>
-            ${
-              data.ratingBase
-                ? `<tr><td class="lbl">ACV Rating Base:</td><td>${data.ratingBase}</td></tr>`
-                : ""
-            }
+            ${riskRows}
           </table>
         </div>
       </div>
@@ -259,8 +385,8 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
     ${coverageRows}
     <tr class="total-row">
       <td>Total Annual Premium</td>
-      <td colspan="2">—</td>
-      <td>${data.totalAnnualPremium}</td>
+      <td colspan="2">&mdash;</td>
+      <td>${totalAnnualPremium}</td>
     </tr>
   </tbody>
 </table>
