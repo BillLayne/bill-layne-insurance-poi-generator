@@ -28,6 +28,8 @@ const POLICY_TYPE_OPTIONS = [
   { value: "other", label: "Other" },
 ] as const;
 
+const SIGNATURE_IMAGE_URL = "/bill-layne-signature.png";
+
 export default function App() {
   const [documentBase64, setDocumentBase64] = useState<string | null>(null);
   const [documentMimeType, setDocumentMimeType] = useState<string | null>(null);
@@ -47,6 +49,7 @@ export default function App() {
   const [docDate, setDocDate] = useState("");
   const [policyTypeOverride, setPolicyTypeOverride] = useState<string>("auto-detect");
   const [otherPolicyTypeLabel, setOtherPolicyTypeLabel] = useState("");
+  const [signatureMode, setSignatureMode] = useState<"none" | "bill">("none");
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -181,7 +184,9 @@ export default function App() {
       cityStateZip: currentLienCityStateZip.trim(),
     };
 
-    const html = buildPOIDocument(effectiveData, lienholder, docDate);
+    const html = buildPOIDocument(effectiveData, lienholder, docDate, {
+      signatureUrl: signatureMode === "bill" ? SIGNATURE_IMAGE_URL : undefined,
+    });
     setPreviewHtml(html);
     setStatus("Document ready - download or print");
   };
@@ -392,6 +397,24 @@ export default function App() {
                   />
                 </div>
               )}
+            </div>
+
+            <div className="rounded-lg border border-sky-100 bg-sky-50 p-4">
+              <label className="mb-2 flex items-center gap-2 text-sm font-bold text-sky-900">
+                <Edit3 className="h-4 w-4" />
+                6. Authorized Signature
+              </label>
+              <select
+                value={signatureMode}
+                onChange={(e) => setSignatureMode(e.target.value as "none" | "bill")}
+                className="w-full rounded border border-sky-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="none">Do not add signature</option>
+                <option value="bill">Add Bill signature</option>
+              </select>
+              <p className="mt-2 text-xs text-sky-800">
+                Choose whether the generated proof should place your signature on the authorized signature line.
+              </p>
             </div>
 
             <button

@@ -153,7 +153,16 @@ const buildRiskDetails = (data: ParsedPolicyData, policyCategory: string) => {
   };
 };
 
-export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder, docDate: string): string {
+type POIDocumentOptions = {
+  signatureUrl?: string;
+};
+
+export function buildPOIDocument(
+  data: ParsedPolicyData,
+  lienholder: Lienholder,
+  docDate: string,
+  options: POIDocumentOptions = {},
+): string {
   if (!data) return "";
 
   const carrier = clean(data.carrier);
@@ -172,6 +181,10 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
   const insuredCityStateZip = formatCityStateZip(data.insuredCity, data.insuredState, data.insuredZip);
   const policyPeriod = [clean(data.policyPeriodStart), clean(data.policyPeriodEnd)].filter(Boolean).join(" - ");
   const totalAnnualPremium = clean(data.totalAnnualPremium, "&mdash;");
+  const signatureUrl = clean(options.signatureUrl);
+  const signatureImage = signatureUrl
+    ? `<img class="signature-image" src="${signatureUrl}" alt="${AGENCY.agentName} signature" />`
+    : "";
 
   const lienholderBlock = lienholderName
     ? `
@@ -268,6 +281,8 @@ export function buildPOIDocument(data: ParsedPolicyData, lienholder: Lienholder,
   .lien-grid td { padding: 1px 4px 1px 0; font-size: 9pt; vertical-align: top; }
   .lien-grid .lbl { font-weight: bold; width: 42%; color: #8a6000; }
   .sig-table { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 6px; }
+  .signature-stack { min-height: 42px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .signature-image { width: 150px; max-height: 38px; object-fit: contain; display: block; margin: 0 0 -13px 13px; position: relative; z-index: 1; }
   .sig-line { border-top: 1.5px solid #000; padding-top: 2px; margin-top: 12px; font-size: 8pt; }
   .footer { border-top: 2px solid #003d7a; padding-top: 4px; margin-top: 6px; }
   .footer-table { width: 100%; border-collapse: collapse; }
@@ -400,7 +415,10 @@ ${lienholderBlock}
 <table class="sig-table">
   <tr>
     <td style="width:50%; vertical-align:bottom;">
-      <div class="sig-line">Authorized Agent Signature</div>
+      <div class="signature-stack">
+        ${signatureImage}
+        <div class="sig-line">Authorized Agent Signature</div>
+      </div>
     </td>
     <td style="width:8%;"></td>
     <td style="width:42%; vertical-align:bottom;">
