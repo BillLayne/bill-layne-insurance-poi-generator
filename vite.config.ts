@@ -3,12 +3,15 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(({mode}) => {
+export default defineConfig(({mode, command}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      // The Gemini key is for local development only (`npm run dev`). A production build
+      // never carries it: the hosted site calls /api/* and the key stays in the Cloudflare
+      // Pages environment. Building it in would publish the key in the public JavaScript.
+      'process.env.GEMINI_API_KEY': JSON.stringify(command === 'serve' ? env.GEMINI_API_KEY || '' : ''),
     },
     resolve: {
       alias: {

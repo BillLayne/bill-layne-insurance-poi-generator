@@ -184,8 +184,9 @@ export default function App() {
       cityStateZip: currentLienCityStateZip.trim(),
     };
 
+    // Full address, so the signature still shows when the letter is saved as an HTML file and opened elsewhere.
     const html = buildPOIDocument(effectiveData, lienholder, docDate, {
-      signatureUrl: signatureMode === "bill" ? SIGNATURE_IMAGE_URL : undefined,
+      signatureUrl: signatureMode === "bill" ? new URL(SIGNATURE_IMAGE_URL, window.location.origin).href : undefined,
     });
     setPreviewHtml(html);
     setStatus("Document ready - download or print");
@@ -218,14 +219,24 @@ export default function App() {
   const handleDownload = () => {
     if (!previewHtml) return;
     const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      printWindow.document.write(previewHtml);
-      printWindow.document.close();
+    if (!printWindow) return;
+
+    printWindow.document.write(previewHtml);
+
+    // Print once the logos and the letter's font have arrived, so the PDF matches the preview.
+    let printed = false;
+    const print = () => {
+      if (printed || printWindow.closed) return;
+      printed = true;
       printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    }
+      printWindow.print();
+    };
+    printWindow.addEventListener("load", () => {
+      const fonts = printWindow.document.fonts;
+      (fonts ? fonts.ready : Promise.resolve()).then(() => setTimeout(print, 100), print);
+    });
+    printWindow.document.close();
+    setTimeout(print, 4000);
   };
 
   const handleDownloadHtml = () => {
