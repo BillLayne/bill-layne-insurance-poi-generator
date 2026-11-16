@@ -8,3 +8,6 @@ coverage/
 !.env.example
 .dev.vars
 .wrangler
+
+# Output of tools/fit-lab
+fit-lab-out/
